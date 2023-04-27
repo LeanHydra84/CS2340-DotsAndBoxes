@@ -1,16 +1,12 @@
-    .data
-
-strv: .asciiz "Testing: \n"
-
     .text
 
 main:
 
     li $s0, 8
+    li $s1, 6
 
-    addi $v0, $0, 4
-    la $a0, strv
-    syscall
+    # TEST CODE
+
 
     jal draw_board
 

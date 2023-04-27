@@ -1,33 +1,27 @@
     .data
+    
+board: .space 56
 
-board: .space 64
 dotstr: .asciiz " . "
 hdash: .asciiz "--"
 halfspacer: .asciiz "  "
-threespacer: .asciiz "   "
 
     .text
+    
     .globl draw_board
     .globl get_capture_char
+	.globl set_line_between
+	.globl count_captures
 
-### TEMP REGISTERS:
+### TEMP REGISTERS FOR draw_board:
 ## $t0 : Array indexer
 ## $t1 : Horizontal Line counter
 ## $t2 : Vertical Height (NOT the same as tile height)
 ## $t4 : Vertical Line counter
-## $t3 : 
-###
+## $t5/6/7/8: Temps
 
 draw_board:
-	# TEST CODE
-	la $t0, board
-	li $t1, 8
-	
-	sb $t1, 0($t0)
-	sb $t1, 5($t0)
-	sb $t1, 6($t0)
-	sb $t1, 63($t0)
-	# END TEST CODE
+
 
 	# save return address
     subi $sp, $sp, 4
@@ -35,14 +29,15 @@ draw_board:
     
 	jal print_abcs
 
-	# $s0 contains dimension
+	# $s0 contains width
+	# $s1 contains height
 
 	li $t0, 0 # Array indexer
 	li $t1, 0 # Horizontal line counter
 	li $t4, 0 # Vertical line counter
 
 	# number of total rows drawn (tiles + dots)
-	mul $t2, $s0, 2
+	mul $t2, $s1, 2
 	addi $t2, $t2, 1
 	
 	# Hardcoded zero at the beginning
@@ -50,7 +45,7 @@ draw_board:
 	li $a0, 0
 	syscall
 
-db_loop_pt:
+db_dot_row:
     li $v0, 4 # print char
     la $a0, dotstr
     syscall
@@ -87,23 +82,57 @@ db_draw_horiz_blank:
 
     j db_process_eol
     
-db_get_val:
-	
-	li $v0, 4
-	la $a0, halfspacer
+db_tile_row:
+
+    lb $t7, board($t0)
+    move $a0, $t7 # $t7 is used later, I promise
+    jal get_capture_char
+    move $t6, $v0
+    
+    # print vert line
+    andi $t5, $a0, 0x2 # 0010
+    beqz $t5, db_draw_vert_blank
+    
+    li $v0, 11
+    li $a0, 124 # | char
+    syscall
+    
+    j db_end_vert_spacer
+db_draw_vert_blank:
+	li $v0, 11
+	li $a0, 32 # Space
 	syscall
 	
-    # GET ARRAY VALUE
-    lb $a0, board($t0)
-    jal get_capture_char
+db_end_vert_spacer:
+    
+	#li $v0, 11
+	li $a0, 32 # Space
+	syscall
     
     # print value from get_capture_char function
-    move $a0, $v0
+    move $a0, $t6
     li $v0, 11
     syscall
     
     addi $t0, $t0, 1
+    bne $t0, $s0, db_vert_skip_edgecase
     
+    # EDGE CASE    
+    andi $t7, $t7, 1 # 0001 check for right
+    beqz $t7, db_vert_skip_edgecase
+    
+    li $v0, 4
+    la $a0, halfspacer
+    syscall
+
+	li $v0, 11
+    li $a0, 124
+    syscall
+
+    
+    j db_process_eol
+    
+db_vert_skip_edgecase:
     li $v0, 4
 	la $a0, halfspacer
 	syscall
@@ -133,7 +162,7 @@ db_printnewline:
     
     # Align symbols
     li $v0, 4
-    la $a0, threespacer
+    la $a0, halfspacer
 	syscall
 	
 	j db_skipnewline
@@ -147,8 +176,8 @@ db_skipnewline:
     andi $t5, $t4, 0x1 # Mask bit for odd numbers
     bge $t4, $t2, db_exit # Loop until all values visited
     
-    beqz $t5, db_loop_pt
-    j db_get_val
+    beqz $t5, db_dot_row
+    j db_tile_row
     
     
 db_exit:
@@ -182,10 +211,6 @@ print_abcs:
 	li $t0, 0
 	li $t1, 65 # A ascii
 	
-	li $v0, 11
-	li $a0, 32
-	syscall
-	
 pabc_loop:
 	
 	li $v0, 4
@@ -202,7 +227,7 @@ pabc_loop:
 	
 	addi $t1, $t1, 1
 	addi $t0, $t0, 1
-	blt $t0, $s0, pabc_loop
+	ble $t0, $s0, pabc_loop
 
 	# end pabc_loop
 	
@@ -215,32 +240,142 @@ pabc_loop:
 # END PRINT_ABC FUNCTION
 
 set_line_between:
+	subi $sp, $sp, 4
+	sw $ra, ($sp)
+
 	# $a0 : dot 1 x
 	# $a1 : dot 1 y
 	# $a2 : dot 2 x
 	# $a3 : dot 2 y
 	
+	# assuming input already validated
 	beq $a0, $a2, slb_vline # if both x values are the same, the line is vertical
+
 slb_hline:
-	
 	# Top address = board offset: (d1X + s0 * minY)
 	# Bottom address = board offset: (d1X + s0 * maxY)
+	move $t0, $a1
+	move $t1, $a3
+	jal min_t0_t1
+	# minY is in $v0
 	
-	# get minY
+	subi $v0, $v0, 1 # align
+
+	li $t5, -1
+	blt $v0, $t5, slb_hline_s2
 	
-	
-	mul $t1, $s0, #MINY
-	
-	
-	
-	jr $ra
+	mul $t0, $s0, $v0 # s0 * minY
+	add $t0, $t0, $a0 # + d1X
+
+	lb $t1, board($t0)
+	ori $t1, $t1, 4 # 0100
+	jal internal_t1_check_square
+	sb $t1, board($t0)
+
+slb_hline_s2:
+
+	addi $v0, $v0, 1
+	bge $v0, $s1, slb_exit 		# USING S1 AS HEIGHT
+
+	add $t0, $t0, $s0
+
+	lb $t1, board($t0)
+	ori $t1, $t1, 8 # 1000
+	jal internal_t1_check_square
+	sb $t1, board($t0)
+
+	j slb_exit
 slb_vline:
 
-	# Left address = board offset: (s0 * d1Y + minX)
-	# Right address = board offset: (s0 * d1Y + maxX)
-	jr $ra
+	# Left address = board offset: (s0 * d1Y + minX) - 1
+	# Right address = board offset: (s0 * d1Y + maxX) - 1
+
+	move $t0, $a0
+	move $t1, $a2
+	jal min_t0_t1
+	# minX is in $v0
+	
+	mul $t0, $a1, $s0 # s0 * d1Y
+	add $t0, $t0, $v0 # + minX
+	subi $t0, $t0, 1 # align
+	
+	bltz $v0, slb_vline_s2
+	
+	lb $t1, board($t0)
+	ori $t1, $t1, 0x1 # 0001 right
+	jal internal_t1_check_square
+	sb $t1, board($t0)
+	
+slb_vline_s2:
+	addi $t0, $t0, 1
+	beq $v0, $s0, slb_exit
+	
+	lb $t1, board($t0)
+	ori $t1, $t1, 0x2 # 0010 left
+	jal internal_t1_check_square
+	sb $t1, board($t0)
+
+slb_exit:
+	lw $t0, ($sp)
+	addi $sp, $sp, 4
+
+	jr $t0
 
 # END SET_LINE_BETWEEN FUNCTION
 
+min_t0_t1: # For internal (set_line_between function) use only /// uses t0 and t1 as argument registers to avoid needing to cache argument registers
+	slt $t2, $t0, $t1
+	beqz $t2, mt01_t0l
 
+	move $v0, $t1
+	jr $ra
+mt01_t0l:
+	move $v0, $t0
+	jr $ra
 	
+	
+internal_t1_check_square: # For internal (set_line_between function) use only // uses $t1 as argument registers to avoid needing to cache argument registers
+	bne $t1, 0xF, it1cs_end # 0xF == 0b001111
+	
+	beqz $s2, it1cs_playertile
+	
+	# Computer tile:
+	ori $t1, $t1, 0x20 # 0x20 == 0b100000
+	jr $ra
+	
+it1cs_playertile:
+	# Player tile:
+	ori $t1, $t1, 0x10 # 0x10 == 0b010000
+it1cs_end:
+	jr $ra
+	
+count_captures:
+	mul $t1, $s0, $s1 # Length
+	li $t2, 0 # Counter
+	
+	li $v0, 0 # Player Capture Counter
+	li $v1, 0 # Computer Capture Counter
+	
+cc_loop:
+	beq $t1, $t2, cc_end
+
+	lb $t0, board($t2)
+	andi $t0, $t0, 0x30 # 0x30 == 0b110000
+	
+	beq $t0, 0x20, cc_add_player
+	beq $t0, 0x10, cc_add_computer
+	j cc_loop_end
+	
+cc_add_player:
+	addi $v0, $v0, 1
+	j cc_loop
+cc_add_computer:
+	addi $v1, $v1, 1
+	
+cc_loop_end:
+	addi $t2, $t2, 1
+	j cc_loop
+
+cc_end:
+	jr $ra
+# END COUNT_CAPTURES FUNCTION
