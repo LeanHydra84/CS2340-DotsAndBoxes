@@ -1,18 +1,22 @@
     .data
-    
+
 board: .space 48
+
+ALLOCATION_SHIELD: .space 1024
 
 dotstr: .asciiz " . "
 hdash: .asciiz "--"
 halfspacer: .asciiz "  "
 
+ALLOCATION_SHIELD2: .space 1024
+
     .text
-    
+    .globl board    
     .globl draw_board
     .globl get_capture_char
 	.globl set_line_between
 	.globl count_captures
-	.globl is_line_valid
+	.globl is_line_placed
 
 ### TEMP REGISTERS FOR draw_board:
 ## $t0 : Array indexer
@@ -253,20 +257,21 @@ set_line_between:
 	beq $a0, $a2, slb_vline # if both x values are the same, the line is vertical
 
 slb_hline:
-	# Top address = board offset: (d1X + s0 * minY)
-	# Bottom address = board offset: (d1X + s0 * maxY)
-	move $t0, $a1
-	move $t1, $a3
+	# Top address = board offset: (minX + s0 * d1Y)
+	# Bottom address = board offset: (maxX + s0 * d1Y)
+	move $t0, $a0
+	move $t1, $a2
 	jal min_t0_t1
-	# minY is in $v0
+	# minX is in $v0
 	
+	subi $t8, $a1, 1 # align
 	subi $v0, $v0, 1 # align
 
 	li $t5, -1
 	blt $v0, $t5, slb_hline_s2
 	
-	mul $t0, $s0, $v0 # s0 * minY
-	add $t0, $t0, $a0 # + d1X
+	mul $t0, $s0, $t8 # s0 * d1Y
+	add $t0, $t0, $v0 # + minX
 
 	lb $t1, board($t0)
 	ori $t1, $t1, 4 # 0100
@@ -275,8 +280,8 @@ slb_hline:
 
 slb_hline_s2:
 
-	addi $v0, $v0, 1
-	bge $v0, $s1, slb_exit 		# USING S1 AS HEIGHT
+	addi $t8, $t8, 1
+	bge $t8, $s1, slb_exit 		# USING S1 AS HEIGHT
 
 	add $t0, $t0, $s0
 
@@ -288,16 +293,18 @@ slb_hline_s2:
 	j slb_exit
 slb_vline:
 
-	# Left address = board offset: (s0 * d1Y + minX) - 1
-	# Right address = board offset: (s0 * d1Y + maxX) - 1
+	# Left address = board offset: (s0 * minY + d1X) - 1
+	# Right address = board offset: (s0 * maxY + d1X) - 1
 
-	move $t0, $a0
-	move $t1, $a2
+	move $t0, $a1
+	move $t1, $a3
 	jal min_t0_t1
 	# minX is in $v0
 	
-	mul $t0, $a1, $s0 # s0 * d1Y
-	add $t0, $t0, $v0 # + minX
+	subi $v0, $v0, 1
+	
+	mul $t0, $v0, $s0 # s0 * d1Y
+	add $t0, $t0, $a0 # + minX
 	subi $t0, $t0, 1 # align
 	
 	bltz $v0, slb_vline_s2
@@ -358,7 +365,7 @@ count_captures:
 	li $v1, 0 # Computer Capture Counter
 	
 cc_loop:
-	beq $t1, $t2, cc_end
+	bge $t2, $t1, cc_end
 
 	lb $t0, board($t2)
 	andi $t0, $t0, 0x30 # 0x30 == 0b110000
@@ -369,7 +376,7 @@ cc_loop:
 	
 cc_add_player:
 	addi $v0, $v0, 1
-	j cc_loop
+	j cc_loop_end
 cc_add_computer:
 	addi $v1, $v1, 1
 	
@@ -381,7 +388,7 @@ cc_end:
 	jr $ra
 # END COUNT_CAPTURES FUNCTION
 
-is_line_valid:
+is_line_placed:
 	addi $sp, $sp, -4
 	sw	$ra, 0($sp)
 
@@ -445,13 +452,13 @@ ilp_set_valid:
 	seq $v0, $t1, $zero
 	beqz $v0, ilp_is_valid
 
-	li $v0, 1
+	li $v0, 0
 
+ilp_exit:
 	lw $t0, 0($sp)
 	addi $sp, $sp, 4
-
 	jr $t0
 
 ilp_is_valid:
-	li $v0, 0
-	jr $ra
+	li $v0, 1
+	j ilp_exit
