@@ -1,6 +1,6 @@
     .data
     
-board: .space 56
+board: .space 48
 
 dotstr: .asciiz " . "
 hdash: .asciiz "--"
@@ -12,6 +12,7 @@ halfspacer: .asciiz "  "
     .globl get_capture_char
 	.globl set_line_between
 	.globl count_captures
+	.globl is_line_valid
 
 ### TEMP REGISTERS FOR draw_board:
 ## $t0 : Array indexer
@@ -379,3 +380,78 @@ cc_loop_end:
 cc_end:
 	jr $ra
 # END COUNT_CAPTURES FUNCTION
+
+is_line_valid:
+	addi $sp, $sp, -4
+	sw	$ra, 0($sp)
+
+	# $a0 : x1
+	# $a1 : y1
+	# $a2 : x2
+	# $a3 : y2
+
+	beq $a0, $a2, ilp_vert
+
+	move $t0, $a1
+	move $t1, $a3
+	jal min_t0_t1
+
+	subi $v0, $v0, 1
+
+	blt $v0, -1, ilp_horiz_edgecase
+
+	mul $t0, $s0, $v0
+	add $t0, $t0, $a0
+
+	lb $t1, board($t0)
+	andi $t1, $t1, 4 # 0100
+
+	j ilp_set_valid
+
+ilp_horiz_edgecase:	
+	add $t0, $t0, $s0
+	lb $t1, board($t0)
+	andi $t1, $t1, 8 # 1000
+
+	j ilp_set_valid
+ilp_vert:
+
+	move $t0, $a0
+	move $t1, $a2
+	jal min_t0_t1
+
+	mul $t0, $a1, $s0
+	add $t0, $t0, $v0
+	subi $t0, $t0, 1
+
+	bltz $v0, ilp_vert_edgecase
+
+	lb $t1, board($t0)
+	andi $t1, $t1, 1 # 0001
+
+	j ilp_set_valid
+ilp_vert_edgecase:
+
+	addi $t0, $t0, 1
+	
+	lb $t1, board($t0)
+	andi $t1, $t1, 2 # 0010
+
+	j ilp_set_valid
+
+ilp_set_valid:
+
+	# $t1 contains masked value
+	seq $v0, $t1, $zero
+	beqz $v0, ilp_is_valid
+
+	li $v0, 1
+
+	lw $t0, 0($sp)
+	addi $sp, $sp, 4
+
+	jr $t0
+
+ilp_is_valid:
+	li $v0, 0
+	jr $ra
